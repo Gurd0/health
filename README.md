@@ -53,10 +53,10 @@ To rebuild from scratch: delete `data/health.duckdb` and import each takeout in 
 - Sleep and exercise ids are the same in takeout and API; they merge by id. The API has
   no sleep scores or exercise log type, so those are kept from the takeout.
 
-**Only available through takeout** (keep doing a takeout now and then): sleep scores, body
-and skin temperature, EDA/stress, readiness, cardio load, GPS, running dynamics (cadence,
-speed, stride, ground contact), micro motion, breathing quality. `floors`, `total-calories`
-and `calories-in-heart-rate-zone` exist in the API only as rollups (not synced yet).
+**Some data is only available through takeout** (sleep scores, running form, cardio load,
+readiness, stress/EDA, temperature, ...), so import a new takeout now and then. See
+[DATA.md](DATA.md) for what comes from the API, what only comes from a takeout, and what the
+dashboard uses.
 
 ## Server (Docker)
 
@@ -162,8 +162,7 @@ http://localhost:5173. Changes show up immediately, and `api/` calls go to the P
 - The same activity can be recorded by several sources (e.g. phone + watch steps).
   Don't sum across `source`; pick one per period.
 
-## Not imported yet (still in raw/)
+## Data sources
 
-`Global Export Data/` (Fitbit-format duplicates of the above), top-level `Temperature/`,
-`Heart Rate Variability/`, `Oxygen Saturation (SpO2)/`, `Stress Journal/`, `Biometrics/`,
-`UserActivityProbabilities`, and account/settings files.
+[DATA.md](DATA.md) lists every data type by origin (API, takeout, legacy Google Fit), including
+the takeout folders that aren't imported yet.
