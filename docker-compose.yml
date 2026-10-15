@@ -13,4 +13,4 @@ services:
     # Private network only: bind to localhost (reach it through an SSH tunnel) or to the
     # server's LAN/Tailscale IP. Don't use 0.0.0.0 on a machine with a public IP.
     ports:
-      - "${BIND:-127.0.0.1}:8000:8000"
+      - "${BIND:-127.0.0.1}:${PORT:-8000}:8000"
