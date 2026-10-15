@@ -17,9 +17,14 @@ Settings (environment):
     SYNC_TIME    daily sync time, HH:MM (default 04:30)
     SYNC_TZ      time zone for SYNC_TIME (default Europe/Oslo)
     HEALTH_DB, HEALTH_SECRETS   database file and secrets folder (see db.py, api.py)
+    HEALTH_TRAINING_DB   plans, run notes and shoes (default data/training.duckdb, see training_db.py)
     HEALTH_WEB   the built front end (default web/dist; build it with `npm run build` in web/)
+
+Training (plans, notes, shoes) is the only data written through the API. There is no login, so
+writes only accept JSON bodies: a plain cross-site form post can't trigger them.
 """
 import contextlib
+import datetime as dt
 import html
 import json
 import os
@@ -28,16 +33,18 @@ import threading
 import time
 import traceback
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from typing import List, Optional
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from google.auth.exceptions import RefreshError
+from pydantic import BaseModel, Field
 
-from . import api, dashboard, db, sync
+from . import api, dashboard, db, sync, training, training_db
 
 PUBLIC_URL = os.environ.get("PUBLIC_URL", "http://localhost:8000").rstrip("/")
 REDIRECT_URI = PUBLIC_URL + "/oauth/callback"
@@ -61,7 +68,9 @@ def _now():
 class Server:
     def __init__(self):
         self.con = db.connect()
+        training_db.attach(self.con)
         self.sync_lock = threading.Lock()
+        self.write_lock = threading.Lock()  # training writes, one at a time
         self.data = None
         self.details = {}
         self.logins = {}  # OAuth state -> (PKCE verifier, expiry time)
@@ -91,6 +100,16 @@ class Server:
             self.data, self.details = dashboard.collect(cur)
         finally:
             cur.close()
+
+    @contextlib.contextmanager
+    def cursor(self, write=False):
+        """A cursor on the shared connection; with write=True also holds the training write lock."""
+        with (self.write_lock if write else contextlib.nullcontext()):
+            cur = self.con.cursor()
+            try:
+                yield cur
+            finally:
+                cur.close()
 
     # --- sync ---------------------------------------------------------------------------------------
     def run_sync(self, trigger):
@@ -239,10 +258,25 @@ def index():
 app.mount("/assets", StaticFiles(directory=WEB_DIST / "assets", check_dir=False), name="assets")
 
 
+def _json(obj):
+    return Response(json.dumps(obj, separators=(",", ":"), allow_nan=False, default=str),
+                    media_type="application/json", headers=NO_STORE)
+
+
+@app.middleware("http")
+async def json_writes_only(request: Request, call_next):
+    """Training writes must send JSON, which a cross-site <form> can't (see the module docstring)."""
+    if request.method in ("POST", "PUT", "PATCH") and request.url.path.startswith("/api/") \
+            and request.url.path != "/api/sync" \
+            and not request.headers.get("content-type", "").startswith("application/json"):
+        return JSONResponse({"detail": "Send a JSON body (Content-Type: application/json)."}, status_code=415)
+    return await call_next(request)
+
+
 @app.get("/api/data")
 def get_data():
-    return Response(json.dumps(server.data, separators=(",", ":"), allow_nan=False),
-                    media_type="application/json", headers=NO_STORE)
+    with server.cursor() as cur:
+        return _json({**server.data, "runs": training.annotate_runs(cur, server.data["runs"])})
 
 
 @app.get("/api/runs/{run_id}")
@@ -264,6 +298,252 @@ def post_sync():
     if not server.start_sync("manual"):
         raise HTTPException(409, "A sync is already running")
     return {"started": True}
+
+
+# --- Training ---------------------------------------------------------------------------------------
+
+KINDS = ("easy", "strides", "long", "tempo", "intervals", "recovery", "race")
+ZONES = ("LIGHT", "MODERATE", "VIGOROUS", "PEAK")
+
+
+class PlanIn(BaseModel):
+    goal_km: float = Field(ge=1, le=100)
+    goal_date: date
+    goal_time_s: Optional[float] = Field(None, gt=0)
+    runs_per_week: int = Field(ge=3, le=6)
+    days: List[int]
+    long_day: int = Field(ge=0, le=6)
+    name: Optional[str] = Field(None, max_length=80)
+
+
+class SessionIn(BaseModel):
+    date: Optional[dt.date] = None  # dt.date: a field called `date` hides the type
+    kind: Optional[str] = None
+    title: Optional[str] = Field(None, max_length=80)
+    distance_km: Optional[float] = Field(None, ge=0, le=100)
+    pace_lo: Optional[float] = Field(None, gt=0)
+    pace_hi: Optional[float] = Field(None, gt=0)
+    hr_zone: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=500)
+    status: Optional[str] = None
+    run_id: Optional[str] = None
+
+
+class SwapIn(BaseModel):
+    a: str
+    b: str
+
+
+class NoteIn(BaseModel):
+    rpe: Optional[int] = Field(None, ge=1, le=10)
+    feel: Optional[int] = Field(None, ge=1, le=5)
+    note: Optional[str] = Field(None, max_length=2000)
+    shoe_id: Optional[str] = None
+
+
+class ShoeIn(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=60)
+    start_km: Optional[float] = Field(None, ge=0, le=5000)
+    max_km: Optional[float] = Field(None, gt=0, le=5000)
+    retired: Optional[bool] = None
+    default: Optional[bool] = None
+    since: Optional[dt.date] = None  # with default: true, the first day it counts as the default
+
+
+class SettingsIn(BaseModel):
+    target_km: Optional[float] = Field(None, ge=0, le=300)
+    target_runs: Optional[int] = Field(None, ge=0, le=14)
+
+
+def _inputs(body: PlanIn):
+    return training.plan_inputs({**body.model_dump(), "goal_date": body.goal_date.isoformat()})
+
+
+def _bad(e):
+    return HTTPException(400, str(e))
+
+
+@app.get("/api/training")
+def get_training():
+    with server.cursor() as cur:
+        return _json(training.build(cur, server.data))
+
+
+@app.post("/api/plans/preview")
+def preview_plan(body: PlanIn):
+    try:
+        sessions, summary = training.preview(server.data, _inputs(body))
+    except ValueError as e:
+        raise _bad(e)
+    with server.cursor() as cur:
+        return _json(training.preview_json(sessions, summary, training.latest_zones(cur)))
+
+
+@app.post("/api/plans", status_code=201)
+def create_plan(body: PlanIn):
+    with server.cursor(write=True) as cur:
+        try:
+            return {"id": training.create_plan(cur, server.data, _inputs(body), body.name)}
+        except ValueError as e:
+            raise _bad(e)
+
+
+@app.post("/api/plans/{plan_id}/rebuild")
+def rebuild_plan(plan_id: str):
+    with server.cursor(write=True) as cur:
+        try:
+            return {"sessions": training.rebuild_plan(cur, server.data, plan_id)}
+        except KeyError:
+            raise HTTPException(404, "No such plan")
+        except ValueError as e:
+            raise _bad(e)
+
+
+@app.delete("/api/plans/{plan_id}")
+def archive_plan(plan_id: str):
+    with server.cursor(write=True) as cur:
+        n = cur.execute("UPDATE tr.plans SET status = 'archived' WHERE plan_id = ?", [plan_id]).fetchone()[0]
+    if not n:
+        raise HTTPException(404, "No such plan")
+    return {"archived": plan_id}
+
+
+def _check_session(fields):
+    if "kind" in fields and fields["kind"] not in KINDS:
+        raise HTTPException(400, f"kind must be one of {', '.join(KINDS)}")
+    if fields.get("hr_zone") is not None and fields["hr_zone"] not in ZONES:
+        raise HTTPException(400, f"hr_zone must be one of {', '.join(ZONES)}")
+    if "status" in fields and fields["status"] not in ("planned", "skipped"):
+        raise HTTPException(400, "status must be planned or skipped")
+    if fields.get("run_id") and not any(r["id"] == fields["run_id"] for r in server.data["runs"]):
+        raise HTTPException(400, "No such run")
+
+
+@app.post("/api/sessions", status_code=201)
+def add_session(body: SessionIn):
+    fields = body.model_dump(exclude_unset=True)
+    if not body.date or not body.kind:
+        raise HTTPException(400, "date and kind are required")
+    _check_session(fields)
+    with server.cursor(write=True) as cur:
+        p = training.active_plan(cur)
+        if not p:
+            raise HTTPException(400, "There is no active plan")
+        sid = training_db.new_id()
+        km = body.distance_km
+        dur = round(km * (body.pace_lo + body.pace_hi) / 2) if km and body.pace_lo and body.pace_hi else None
+        cur.execute("INSERT INTO tr.sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'planned', true)",
+                    [sid, p["plan_id"], body.date, body.kind, body.title or body.kind.capitalize() + " run", km, dur,
+                     body.pace_lo, body.pace_hi, body.hr_zone, body.description, body.run_id])
+    return {"id": sid}
+
+
+@app.patch("/api/sessions/{session_id}")
+def edit_session(session_id: str, body: SessionIn):
+    fields = body.model_dump(exclude_unset=True)
+    _check_session(fields)
+    if not fields:
+        return {"updated": 0}
+    edits = set(fields) - {"status", "run_id"}  # links and skips are kept on rebuild anyway
+    sets = [f"{k} = ?" for k in fields] + (["edited = true"] if edits else [])
+    params = list(fields.values())
+    if "distance_km" in fields or "pace_lo" in fields or "pace_hi" in fields:
+        sets.append("duration_s = CASE WHEN distance_km IS NOT NULL AND pace_lo IS NOT NULL AND pace_hi IS NOT NULL "
+                    "THEN round(distance_km * (pace_lo + pace_hi) / 2) END")
+    with server.cursor(write=True) as cur:
+        # SET expressions see the old row, so update the plain fields first, then the derived duration
+        n = cur.execute(f"UPDATE tr.sessions SET {', '.join(s for s in sets if not s.startswith('duration_s'))} "
+                        "WHERE session_id = ?", params + [session_id]).fetchone()[0]
+        if n and any(s.startswith("duration_s") for s in sets):
+            cur.execute(f"UPDATE tr.sessions SET {sets[-1]} WHERE session_id = ?", [session_id])
+    if not n:
+        raise HTTPException(404, "No such session")
+    return {"updated": n}
+
+
+@app.delete("/api/sessions/{session_id}")
+def delete_session(session_id: str):
+    with server.cursor(write=True) as cur:
+        n = cur.execute("DELETE FROM tr.sessions WHERE session_id = ?", [session_id]).fetchone()[0]
+    if not n:
+        raise HTTPException(404, "No such session")
+    return {"deleted": n}
+
+
+@app.post("/api/sessions/swap")
+def swap_sessions(body: SwapIn):
+    with server.cursor(write=True) as cur:
+        found = dict(cur.execute("SELECT session_id, date FROM tr.sessions WHERE session_id IN (?, ?)",
+                                 [body.a, body.b]).fetchall())
+        if len(found) != 2:
+            raise HTTPException(404, "No such session")
+        cur.execute("UPDATE tr.sessions SET date = ?, edited = true WHERE session_id = ?", [found[body.b], body.a])
+        cur.execute("UPDATE tr.sessions SET date = ?, edited = true WHERE session_id = ?", [found[body.a], body.b])
+    return {"swapped": [body.a, body.b]}
+
+
+@app.put("/api/runs/{run_id}/note")
+def put_note(run_id: str, body: NoteIn):
+    if not any(r["id"] == run_id for r in server.data["runs"]):
+        raise HTTPException(404, "No such run")
+    note = (body.note or "").strip() or None
+    with server.cursor(write=True) as cur:
+        if body.shoe_id and not cur.execute("SELECT 1 FROM tr.shoes WHERE shoe_id = ?", [body.shoe_id]).fetchone():
+            raise HTTPException(400, "No such shoe")
+        cur.execute("DELETE FROM tr.run_notes WHERE run_id = ?", [run_id])
+        if body.rpe or body.feel or note or body.shoe_id:
+            cur.execute("INSERT INTO tr.run_notes VALUES (?, ?, ?, ?, ?, ?)",
+                        [run_id, body.rpe, body.feel, note, body.shoe_id, training_db.now()])
+    return {"saved": run_id}
+
+
+@app.get("/api/shoes")
+def get_shoes():
+    with server.cursor() as cur:
+        return _json(training.shoes_view(cur, server.data["runs"]))
+
+
+def _set_default(cur, shoe_id, since):
+    cur.execute("INSERT INTO tr.shoe_defaults VALUES (?, ?, ?)",
+                [since or training.local_today(), shoe_id, training_db.now()])
+
+
+@app.post("/api/shoes", status_code=201)
+def add_shoe(body: ShoeIn):
+    if not body.name:
+        raise HTTPException(400, "name is required")
+    sid = training_db.new_id()
+    with server.cursor(write=True) as cur:
+        cur.execute("INSERT INTO tr.shoes VALUES (?, ?, ?, ?, false, ?)",
+                    [sid, body.name, body.start_km or 0, body.max_km or 700, training_db.now()])
+        if body.default:
+            _set_default(cur, sid, body.since)
+    return {"id": sid}
+
+
+@app.patch("/api/shoes/{shoe_id}")
+def edit_shoe(shoe_id: str, body: ShoeIn):
+    fields = body.model_dump(exclude_unset=True)
+    with server.cursor(write=True) as cur:
+        if not cur.execute("SELECT 1 FROM tr.shoes WHERE shoe_id = ?", [shoe_id]).fetchone():
+            raise HTTPException(404, "No such shoe")
+        cols = {k: v for k, v in fields.items() if k in ("name", "start_km", "max_km", "retired") and v is not None}
+        if cols:
+            cur.execute(f"UPDATE tr.shoes SET {', '.join(k + ' = ?' for k in cols)} WHERE shoe_id = ?",
+                        list(cols.values()) + [shoe_id])
+        current = training.default_shoe_on(training.default_history(cur), date.max)
+        if fields.get("default"):
+            _set_default(cur, shoe_id, body.since)
+        elif (fields.get("default") is False or fields.get("retired")) and current == shoe_id:
+            _set_default(cur, None, None)  # no default from today
+    return {"updated": shoe_id}
+
+
+@app.put("/api/settings")
+def put_settings(body: SettingsIn):
+    with server.cursor(write=True) as cur:
+        training_db.put_settings(cur, body.model_dump(exclude_unset=True))
+    return {"saved": True}
 
 
 @app.get("/oauth/start")

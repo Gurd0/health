@@ -27,6 +27,13 @@ export function makeDataset(data: DashboardData): Dataset {
 
 export const DataContext = createContext<Dataset | null>(null);
 
+/** Reloads api/data, e.g. after saving a run note (notes and shoes are part of the run summaries). */
+export const ReloadContext = createContext<() => Promise<void>>(async () => {});
+
+export function useReload() {
+  return useContext(ReloadContext);
+}
+
 export function useData(): Dataset {
   const d = useContext(DataContext);
   if (!d) throw new Error("useData() outside <DataContext.Provider>");

@@ -39,16 +39,19 @@ export function useTheme() {
   return [theme, setTheme] as const;
 }
 
-export type Route = { page: "overview" } | { page: "runs" } | { page: "run"; id: string };
+export type Route = { page: "overview" } | { page: "training" } | { page: "runs" } | { page: "run"; id: string } | { page: "gear" };
+export type Page = Route["page"];
 
 function parseHash(): Route {
   const parts = location.hash.slice(1).split("?")[0].split("/").filter(Boolean);
   if (parts[0] === "runs") return { page: "runs" };
+  if (parts[0] === "training") return { page: "training" };
+  if (parts[0] === "gear") return { page: "gear" };
   if (parts[0] === "run" && parts[1]) return { page: "run", id: decodeURIComponent(parts[1]) };
   return { page: "overview" };
 }
 
-/** The page from the URL hash: #/overview, #/runs, #/run/<id>. */
+/** The page from the URL hash: #/overview, #/training, #/runs, #/run/<id>, #/gear. */
 export function useHashRoute() {
   const [route, setRoute] = useState(parseHash);
   useEffect(() => {

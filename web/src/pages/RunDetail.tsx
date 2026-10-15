@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { getRun } from "../api";
 import { ColorBy, RouteMap, ZONE_COLORS } from "../charts/RouteMap";
 import { TimeSeriesChart, TsSpec } from "../charts/TimeSeriesChart";
+import { RunNotes } from "../components/RunNotes";
 import { Run, useData } from "../data";
 import { usePhone, useSessionState } from "../hooks";
 import { avg, clamp, fdur, fhm, fint, fpace, fx, labelCase, signed } from "../lib/format";
@@ -100,6 +101,7 @@ function RunPage({ run, det }: { run: Run; det: Detail }) {
         </>
       )}
       {isTreadmill && <div className="small muted">Treadmill run: distance and pace come from the watch's motion sensors, so there is no route map or elevation.</div>}
+      <RunNotes run={run} />
       <div style={{ height: 24 }} />
     </>
   );

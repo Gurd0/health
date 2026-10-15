@@ -94,7 +94,8 @@ How it behaves:
 - **Takeout imports** need the database to themselves:
   `docker compose stop && docker compose run --rm health python -m ingest takeout raw/takeout-YYYY-MM-DD && docker compose start`.
   The CLI commands `status` and `sync --dry-run` work the same way, with the server stopped.
-- Back up `data/` and `secrets/`. `token.json` is the login.
+- Back up `data/` and `secrets/`. `token.json` is the login; `data/training.duckdb` holds your plans,
+  notes and shoes, which can't be rebuilt from `raw/`.
 
 Run it without Docker: build the front end once (`cd web`, `npm ci`, `npm run build`), then
 `.venv\Scripts\python -m ingest serve` (listens on 127.0.0.1:8000). Don't run `sync.cmd` against the
@@ -102,9 +103,10 @@ same database while the server is running.
 
 ## Dashboard
 
-Served by `ingest serve` (see above). Pages, from the Claude Design canvas "Health & running dashboard": **Overview** (tiles, trends, load and recovery), **Runs**
-(weekly distance, records, progress, all runs) and **Run detail** (route, splits, heart-rate zones,
-pace/elevation, running form, context). Theme: Auto/Light/Dark.
+Served by `ingest serve` (see above). Pages, from the Claude Design canvas "Health & running dashboard": **Overview** (tiles, trends, load and recovery), **Training**
+(plan, today, targets, load; see below), **Runs** (weekly distance, records, progress, all runs),
+**Run detail** (route, splits, heart-rate zones, pace/elevation, running form, context, your notes)
+and **Gear** (shoes). Theme: Auto/Light/Dark.
 
 - `ingest/runs.py` decides what is a run and builds per-run data. A workout is a run if the API says
   RUNNING, its activity is Run/Outdoor Run/Treadmill Run, it's a "Structured Workout" with cadence data,
@@ -124,22 +126,57 @@ React + TypeScript, built with Vite. No chart library: the charts are small SVG 
 
 ```
 web/src/
-  main.tsx, App.tsx      start-up, loading data and status, routing (#/overview, #/runs, #/run/<id>), Sync now
+  main.tsx, App.tsx      start-up, loading data and status, routing (#/overview, #/training, #/runs, #/run/<id>, #/gear), Sync now
   api.ts                 calls to the server
   types.ts               shapes of the server's JSON
   data.ts                the loaded data (useData()), runs with day indexes
   hooks.ts               phone layout, theme, URL routing, state that survives page changes
   lib/format.ts          number/time formatting, mean/quantile/ticks
   lib/calendar.ts        day indexes <-> dates ("15. okt.")
-  components/            Header (with the sync/login banner), Seg (segmented buttons)
-  charts/                TrendChart (Overview), WeeklyDistance, ProgressChart, TimeSeriesChart, RouteMap, svg.tsx (shared bits)
-  pages/                 Overview, Runs, RunDetail
+  lib/training.ts        session kinds/statuses (labels, colours), pace and time parsing
+  components/            Header (with the sync/login banner), Seg (segmented buttons), PlanSetup, SessionEditor, RunNotes
+  charts/                TrendChart (Overview), WeeklyDistance, ProgressChart, TimeSeriesChart, RouteMap, TrainingCharts, svg.tsx (shared bits)
+  pages/                 Overview, Training, Runs, RunDetail, Gear
   styles.css             colour tokens (light/dark) and layout classes
 ```
 
 Development: run `python -m ingest serve` (port 8000), then `npm run dev` in `web/` and open
 http://localhost:5173. Changes show up immediately, and `api/` calls go to the Python server.
 `npm run typecheck` checks types; `npm run build` writes `web/dist/`, which the server serves.
+
+## Training
+
+Plans, run notes, shoes and weekly targets live in `data/training.duckdb` (`HEALTH_TRAINING_DB`),
+attached to the server's connection as `tr` (`ingest/training_db.py`). It's the only data written
+through the API, and writes only accept JSON bodies, so a cross-site form can't post to them.
+
+- **Plan generator** (`ingest/plan.py`). From a goal (5 km to marathon, date 3–26 weeks away,
+  optional goal time), the training days and long-run day, and your last 6 weeks of runs:
+  - fitness: weekly km, longest run, and a 5 km-equivalent time from the best effort of the last
+    90 days (Riegel, exponent 1.06), which also predicts the race time;
+  - paces as multiples of that 5 km pace: easy 1.25–1.35, tempo 1.06–1.09, intervals 0.97–1.00;
+    race pace from the goal time, at most 3 % faster than predicted;
+  - volume from current weekly km, +10 % (or +3 km) a week at most towards a peak set by the goal
+    (25/35/45/60 km), every 4th week at 80 %, then a 1–3 week taper; the long run grows 1.5 km a
+    week at most; quality sessions (tempo, intervals) take about 25 % of the week, two a week only
+    from 30 km and 5 runs;
+  - phases: base (easy + strides), build and peak (tempo and intervals alternate), taper, race.
+- **Rebuild remaining weeks** regenerates future sessions from current fitness. Past sessions and
+  sessions you edited, linked or skipped are kept.
+- **Matching** (`ingest/training.py`): a session takes a run on the same day (closest distance
+  first); a run linked by hand or a skip always wins. Done = at least 80 % of the planned distance.
+  Steady sessions get a pace verdict (±5 s/km around the range) and a heart-rate-zone check.
+- **Weeks**: a week is on target with ≥ 80 % of the planned km and every long, tempo, interval and
+  race session done; the streak counts such weeks in a row. Without a plan, the weekly targets apply.
+- **Load**: Banister TRIMP per run from average heart rate (rest = that day's resting HR, max = the
+  highest of the last year); without heart rate, minutes × RPE × 0.4. ACWR = last 7 days ÷ (last 28
+  days ÷ 4): above 1.3 is a caution, above 1.5 high. Weekly km more than 10 % (or 3 km) above the
+  week before is flagged too.
+- **Recovery check** for today: HRV below its 30-day mean − 1 SD, resting HR more than 3 bpm above
+  its 30-day mean, or under 6 h of sleep. With a quality session planned today it offers to swap it
+  with the next easy run.
+- **Shoes**: km = km already on the shoe + its runs. A run without its own shoe counts for the shoe
+  that was the default on its date, so changing the default never moves old runs.
 
 ## Tables
 

@@ -138,7 +138,7 @@ function RunsTable({ runs, range }: { runs: Run[]; range: Range }) {
       return (ka < kb ? -1 : ka > kb ? 1 : 0) * sort.dir;
     });
   const shown = list.slice(0, limit);
-  const cols = "minmax(170px,1.8fr) repeat(6,minmax(70px,1fr)) 64px";
+  const cols = "minmax(170px,1.8fr) repeat(7,minmax(64px,1fr)) 64px";
   const dash = <span className="muted">—</span>;
   const filtered = (f: () => void) => () => { f(); setLimit(20); };
 
@@ -180,7 +180,7 @@ function RunsTable({ runs, range }: { runs: Run[]; range: Range }) {
       </div>
 
       <div style={{ overflowX: "auto" }}>
-        <div className="table" role="table" aria-label="Runs" style={{ minWidth: 860 }}>
+        <div className="table" role="table" aria-label="Runs" style={{ minWidth: 940 }}>
           <div className="trow thead" role="row" style={{ gridTemplateColumns: cols, padding: "0 4px 8px" }}>
             {sortHead("date", "Date", "left")}
             {sortHead("dist", "Distance", "right")}
@@ -189,6 +189,7 @@ function RunsTable({ runs, range }: { runs: Run[]; range: Range }) {
             {sortHead("hr", "Avg HR", "right")}
             {plainHead("Elev. gain")}
             {plainHead("Cardio load")}
+            {plainHead("Effort")}
             {plainHead("Route")}
           </div>
           {shown.map(x => (
@@ -205,6 +206,9 @@ function RunsTable({ runs, range }: { runs: Run[]; range: Range }) {
               <span role="cell" className="num">{x.hr != null ? x.hr + " bpm" : dash}</span>
               <span role="cell" className="num">{x.elev != null ? x.elev + " m" : dash}</span>
               <span role="cell" className="num">{x.load ?? dash}</span>
+              <span role="cell" className="num" title={x.note ?? undefined}>
+                {x.rpe != null ? "RPE " + x.rpe : dash}{x.note ? <span className="muted" aria-label="Has a note"> ✎</span> : null}
+              </span>
               <span role="cell" style={{ display: "flex", justifyContent: "flex-end" }}>
                 {x.route ? (
                   <svg viewBox="0 0 56 40" width="56" height="40" aria-hidden="true" style={{ display: "block", borderRadius: 6, background: "var(--page)" }}>

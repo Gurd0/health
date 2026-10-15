@@ -56,6 +56,12 @@ export interface RunSummary {
   route: Point[] | null; // thumbnail path in a 56x40 box
   hasSeries: boolean;
   hasForm: boolean;
+  // your own notes (training.duckdb)
+  rpe: number | null; // effort 1-10
+  feel: number | null; // 1 awful - 5 great
+  note: string | null;
+  shoe: string | null; // shoe id: the run's own, else the default shoe on its date
+  shoeAuto: boolean; // true when the shoe comes from the default
 }
 
 export interface Split {
@@ -119,4 +125,141 @@ export interface SyncStatus {
   last_ok: string | null;
   running: boolean;
   next: string | null;
+}
+
+// --- Training (ingest/training.py) ---
+
+export type SessionKind = "easy" | "strides" | "long" | "tempo" | "intervals" | "recovery" | "race";
+export type SessionStatus = "done" | "partial" | "missed" | "skipped" | "today" | "upcoming";
+export type HrZone = "LIGHT" | "MODERATE" | "VIGOROUS" | "PEAK";
+
+export interface Fitness {
+  weekly_km: number;
+  longest_km: number;
+  t5: number; // 5 km-equivalent time, s
+  basis: string;
+  runs: number;
+}
+
+export interface Plan {
+  id: string;
+  name: string;
+  goalKm: number;
+  goalDate: string;
+  goalTimeS: number | null;
+  runsPerWeek: number;
+  days: number[]; // 0 = Monday
+  longDay: number;
+  created: string;
+  predictedS: number | null;
+  fitness: Fitness | null;
+  warnings: string[];
+  paces: Record<string, [number, number]> | null;
+  rebuilt: string | null;
+}
+
+export interface PlannedSession {
+  date: string;
+  kind: SessionKind;
+  title: string;
+  km: number | null;
+  durS: number | null;
+  paceLo: number | null;
+  paceHi: number | null;
+  hrZone: HrZone | null;
+  hrRange: [number, number] | null;
+  description: string | null;
+}
+
+export interface Verdict {
+  pace: "on" | "fast" | "slow" | null;
+  paceDiff: number | null; // s/km outside the range
+  hr: "in" | "above" | "below" | null;
+}
+
+export interface Session extends PlannedSession {
+  id: string;
+  status: SessionStatus;
+  runId: string | null;
+  manual: boolean; // linked by hand
+  edited: boolean;
+  verdict: Verdict | null;
+}
+
+export interface Week {
+  monday: string;
+  plannedKm: number;
+  doneKm: number;
+  planned: number;
+  done: number;
+  adherence: number | null; // %
+  hit: boolean | null;
+  state: "past" | "current" | "future";
+}
+
+export interface Flag {
+  level: "high" | "caution" | "info";
+  text: string;
+  action?: "rebuild" | "archive";
+}
+
+export interface Recovery {
+  status: "ok" | "low" | "unknown";
+  reasons: string[];
+  hrv: number | null;
+  hrv30: number | null;
+  rhr: number | null;
+  rhr30: number | null;
+  sleep: number | null;
+  swap?: { a: string; b: string; bDate: string } | null;
+}
+
+export interface Shoe {
+  id: string;
+  name: string;
+  km: number;
+  startKm: number;
+  maxKm: number;
+  retired: boolean;
+  isDefault: boolean;
+  runs: number;
+  lastUsed: string | null;
+  wear: "ok" | "warn" | "over";
+}
+
+/** GET api/training */
+export interface Training {
+  today: string;
+  plan: Plan | null;
+  sessions: Session[];
+  extra: string[]; // run ids in the plan's span that match no session
+  weeks: Week[];
+  streak: number;
+  targets: { km: number | null; runs: number | null };
+  load: { start: string; load: number[]; acwr: (number | null)[] };
+  runLoad: Record<string, number>;
+  flags: Flag[];
+  recovery: Recovery;
+  shoes: Shoe[];
+  zones: number[];
+}
+
+/** POST api/plans/preview */
+export interface PlanPreview {
+  sessions: PlannedSession[];
+  weeks: { monday: string; phase: string; recovery: boolean; km: number }[];
+  fitness: Fitness;
+  predictedS: number;
+  paces: Record<string, [number, number]>;
+  warnings: string[];
+}
+
+export interface PlanInput {
+  goal_km: number;
+  goal_date: string;
+  goal_time_s: number | null;
+  runs_per_week: number;
+  days: number[];
+  long_day: number;
+  name?: string;
 }

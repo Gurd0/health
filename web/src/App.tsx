@@ -2,11 +2,13 @@
 import { useCallback, useEffect, useState } from "react";
 import * as api from "./api";
 import { Header } from "./components/Header";
-import { DataContext, Dataset, makeDataset } from "./data";
+import { DataContext, Dataset, makeDataset, ReloadContext } from "./data";
 import { useHashRoute } from "./hooks";
+import { Gear } from "./pages/Gear";
 import { Overview } from "./pages/Overview";
 import { RunDetail } from "./pages/RunDetail";
 import { Runs } from "./pages/Runs";
+import { Training } from "./pages/Training";
 import type { SyncStatus } from "./types";
 
 const POLL_MS = 3000;
@@ -58,12 +60,16 @@ export function App() {
   }
   return (
     <DataContext.Provider value={data}>
-      <div className={route.page === "run" ? "wrap tight" : "wrap"}>
-        <Header page={route.page} status={status} onSync={syncNow} />
-        {route.page === "overview" && <Overview />}
-        {route.page === "runs" && <Runs />}
-        {route.page === "run" && <RunDetail id={route.id} />}
-      </div>
+      <ReloadContext.Provider value={loadData}>
+        <div className={route.page === "run" ? "wrap tight" : "wrap"}>
+          <Header page={route.page} status={status} onSync={syncNow} />
+          {route.page === "overview" && <Overview />}
+          {route.page === "training" && <Training />}
+          {route.page === "runs" && <Runs />}
+          {route.page === "run" && <RunDetail id={route.id} />}
+          {route.page === "gear" && <Gear />}
+        </div>
+      </ReloadContext.Provider>
     </DataContext.Provider>
   );
 }

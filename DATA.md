@@ -11,6 +11,10 @@ The database is filled from three origins (the `origin` column):
 When the same row exists in more than one origin, `api` wins over `takeout`, which wins over
 `fit-legacy` (see "Syncing from the Google Health API" in the README for the merge rules).
 
+**What you enter yourself** (training plans, run notes and effort, shoes, weekly targets) is kept
+apart in `data/training.duckdb`. It can't be rebuilt from `raw/` like the rest, so back it up
+together with `data/health.duckdb`. See "Training" in the README.
+
 **In short:** the daily sync keeps heart rate, activity, sleep stages, daily vitals and workouts up
 to date. Running form, cardio load, readiness, sleep scores, stress/EDA and temperature only come
 from a takeout, so those parts of the dashboard stop at the date of your latest takeout until you
