@@ -1,0 +1,17 @@
+# Personal health data never goes into git
+raw/
+data/
+.venv/
+__pycache__/
+*.pyc
+# Google OAuth secrets/tokens (API sync)
+secrets/
+# Server settings (may contain your server address)
+.env
+# Front end dependencies and build output
+web/node_modules/
+web/dist/
+# Design notes with personal health figures
+docs/
+# Local Claude Code settings
+.claude/

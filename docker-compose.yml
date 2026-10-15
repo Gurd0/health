@@ -1,0 +1,16 @@
+services:
+  health:
+    build: .
+    image: health-dashboard
+    restart: unless-stopped
+    env_file: .env
+    # Run as the owner of ./data, ./raw and ./secrets on the host (see `id -u` / `id -g`).
+    user: "${PUID:-1000}:${PGID:-1000}"
+    volumes:
+      - ./data:/app/data
+      - ./raw:/app/raw
+      - ./secrets:/app/secrets
+    # Private network only: bind to localhost (reach it through an SSH tunnel) or to the
+    # server's LAN/Tailscale IP. Don't use 0.0.0.0 on a machine with a public IP.
+    ports:
+      - "${BIND:-127.0.0.1}:8000:8000"

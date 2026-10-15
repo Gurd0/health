@@ -1,0 +1,11 @@
+raw/
+data/
+secrets/
+.venv/
+.env
+.claude/
+docs/
+**/__pycache__/
+*.pyc
+web/node_modules/
+web/dist/
