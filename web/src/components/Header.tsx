@@ -1,12 +1,12 @@
 // Top bar (title, page links, last sync, Sync now, theme) and the sync/login banner below it.
 import { useData } from "../data";
-import { Page, useTheme } from "../hooks";
+import { useTheme } from "../hooks";
 import { fdt } from "../lib/calendar";
 import type { SyncStatus } from "../types";
 import { Seg } from "./Seg";
 
 interface Props {
-  page: Page;
+  page: "overview" | "runs" | "run";
   status: SyncStatus | null;
   onSync: () => void;
 }
@@ -22,9 +22,7 @@ export function Header({ page, status, onSync }: Props) {
           <div className="brand">Health &amp; running</div>
           <nav className="nav" aria-label="Pages">
             <a href="#/overview" aria-current={page === "overview" ? "page" : undefined}>Overview</a>
-            <a href="#/training" aria-current={page === "training" ? "page" : undefined}>Training</a>
-            <a href="#/runs" aria-current={page === "runs" || page === "run" ? "page" : undefined}>Runs</a>
-            <a href="#/gear" aria-current={page === "gear" ? "page" : undefined}>Gear</a>
+            <a href="#/runs" aria-current={page !== "overview" ? "page" : undefined}>Runs</a>
           </nav>
         </div>
         <div className="row">
