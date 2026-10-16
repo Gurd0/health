@@ -372,6 +372,7 @@ def build(con):
             "best5k": effort(5000), "best10k": effort(10000),
             "gps": bool(has_gps), "route": thumb(x, y) if has_gps else None,
             "hasSeries": bool(has_series), "hasForm": bool(has_form),
+            "zoneSecs": [round(v) for v in zsecs] if zsecs and sum(zsecs) > 0 else None,
         }
         summary = {k: (round(float(v), 1) if isinstance(v, float) and k != "dist" else v) for k, v in summary.items()}
         summaries.append(summary)

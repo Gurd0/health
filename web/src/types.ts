@@ -56,6 +56,7 @@ export interface RunSummary {
   route: Point[] | null; // thumbnail path in a 56x40 box
   hasSeries: boolean;
   hasForm: boolean;
+  zoneSecs: number[] | null; // seconds in light, moderate, vigorous, peak
 }
 
 export interface Split {

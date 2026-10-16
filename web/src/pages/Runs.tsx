@@ -1,11 +1,12 @@
 // Runs page: summary with weekly distance, personal records, progress charts and the table of all runs.
 import { useMemo } from "react";
 import { ProgressChart } from "../charts/ProgressChart";
+import { ZONE_COLORS } from "../charts/RouteMap";
 import { WeeklyDistance } from "../charts/WeeklyDistance";
 import { Seg } from "../components/Seg";
 import { Run, useData } from "../data";
 import { runHref, useSessionState } from "../hooks";
-import { fdur, fint, fpace, hm } from "../lib/format";
+import { fdur, fint, fpace, fx, hm } from "../lib/format";
 import { Range, RANGES } from "./Overview";
 
 export function Runs() {
@@ -53,10 +54,51 @@ export function Runs() {
         </div>
       </section>
 
+      <ZoneShare runs={inRange} />
       <PersonalRecords />
       <Progress />
       <RunsTable runs={inRange} range={range} />
     </>
+  );
+}
+
+const ZONE_NAMES = ["Light", "Moderate", "Vigorous", "Peak"];
+
+function ZoneShare({ runs }: { runs: Run[] }) {
+  const withHr = runs.filter(x => x.zoneSecs);
+  const secs = [0, 1, 2, 3].map(z => withHr.reduce((s, x) => s + x.zoneSecs![z], 0));
+  const total = secs.reduce((a, b) => a + b, 0);
+  const rows = ZONE_NAMES.map((name, z) => ({ name, color: ZONE_COLORS[z], time: hm(secs[z]), share: total ? secs[z] / total : 0 }));
+
+  return (
+    <section className="card" aria-labelledby="zones-h">
+      <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+        <h2 id="zones-h">Time in heart-rate zones</h2>
+        <span className="small muted">
+          {withHr.length} of {runs.length} {runs.length === 1 ? "run" : "runs"} with heart rate · zones from each day's thresholds
+        </span>
+      </div>
+      {total ? (
+        <>
+          <div aria-hidden="true" style={{ display: "flex", height: 14, borderRadius: 3, overflow: "hidden", marginTop: 12, gap: 2 }}>
+            {rows.map(z => z.share > 0 && <span key={z.name} style={{ width: fx(z.share * 100) + "%", background: z.color }} />)}
+          </div>
+          <div role="table" aria-label="Share of running time in heart-rate zones"
+            style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: "12px 16px", marginTop: 14 }}>
+            {rows.map(z => (
+              <div key={z.name} role="row" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span role="cell" className="row small text2" style={{ gap: 6 }}>
+                  <span aria-hidden="true" style={{ width: 10, height: 10, borderRadius: 2, background: z.color }} />{z.name}
+                </span>
+                <span role="cell" className="row" style={{ alignItems: "baseline", gap: 6 }}>
+                  <span className="big">{Math.round(z.share * 100)}%</span><span className="unit">{z.time}</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : <div className="small muted" style={{ marginTop: 8 }}>No runs with heart rate in this range.</div>}
+    </section>
   );
 }
 
